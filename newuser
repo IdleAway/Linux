@@ -1,0 +1,243 @@
+#!/usr/bin/env python
+
+#from /root/skripte/lib/ import *
+import time
+import subprocess
+from array import *
+
+def printStatus(u,g,sk,sh,ss,q,ret):
+	print('Username:\t'+u)
+	print('Group:\t\t'+g)
+	print('Skel:\t\t'+sk)
+	print('Shell:\t\t'+sh)
+	print('SSH:\t\t'+ss)
+	print('Quota:\t\t'+q)
+	print
+	print
+	print(ret)
+	print
+
+def clear():
+	subprocess.call(['clear'])
+
+def readLines(path):
+        with open(path) as f:
+                data = f.readlines()
+        return data
+
+def listgroups():
+	print("Aviavble groups:\n")
+	groups = []
+	file = open('/etc/group')
+	for l in file:
+		group = l.split(":")
+		groups.append([group[0],group[2]])
+	file.close
+	for g in groups:
+		if (int(g[1])>=1000 and int(g[1]) != 65534):
+			print g[0]
+	return groups
+
+def getInput(text):
+	text = str(text+": ")
+	return str(raw_input(text))
+
+def chooseName():
+	match = 0
+	newUserName = getInput("Name")
+	searchMe = newUserName+":"
+	passwd = open('/etc/passwd')
+	for line in passwd:
+		if (line.find(searchMe) is not -1):
+			match=1
+	passwd.close()
+	if(match == 0):
+		return newUserName,newUserName+" is valid!"
+	else:
+		return "unset",newUserName+" already existing!"
+
+def createGroup(group):
+	clear()
+	dump = listgroups()
+	print
+	print(group+" is not existing")
+	print("Do you whish to create "+group+"  ?")
+	print
+	user_input = str(getInput("'y' - to continue: "))
+	if (user_input == "j" or user_input == "y"):
+		execBash(['groupadd',group])
+		return group,"Group set to new created group "+group
+	else:
+		return "unset","(-.-*)"
+
+def chooseGroup(groups):
+	print
+	print("Choose one or create a new")
+	print
+	user_input = getInput("Group")
+	for g in groups:
+		group = str(g[0])
+		if group == user_input :
+			return group,"Group set to "+group
+	return createGroup(user_input)
+
+def chooseSkel():
+	skel = getInput('Choose Skel\n[standard|web] ')
+	if skel == "standard" or skel == "web":
+		return skel,"Skel set to "+skel
+	else:
+		return "unset","(-.-*)"
+
+def chooseShell():
+	shell = getInput('Choose Shell\n[bash|false]')
+	if shell == "bash" or shell == "false":
+		return shell,"Shell set to "+shell
+	else:
+		return "unset","(-.-*)"
+
+def chooseSsh():
+	ssh = getInput("Choose ssh\n[true|false]")
+	if ssh == "true" or ssh == "false":
+		return ssh,"SSH set to "+ssh
+	else:
+		return "unset","(-.-*)"
+
+def chooseQuota():
+	quota = getInput("Define quota for /freigaben/\nExample:500M|1G\nQuota: ")
+	try:
+		if int(quota[:-1])>=0 and (quota[-1:] == "M" or quota[-1:] == "T"):
+			return quota,"Quota /freigaben/ "+quota
+		else:
+			 return "unset","(-.-*)"
+	except:
+		return "unset","(-.-*)"
+
+def execBash(str):
+	subprocess.call(str)
+
+def setQuotas(name,quota):
+	execBash(["setquota","-u",name,"0","100M","0","0","/tmp"])
+	execBash(["setquota","-u",name,"0","500M","0","0","/home"])
+	execBash(["setquota","-u",name,"0",quota,"0","0","/freigaben"])
+
+def createSshEntry(name):
+	with open('/etc/ssh/sshd_config',"r") as file:
+		data = file.readlines()
+
+	i=0
+	for l in data:
+		if l.find("AllowUsers") != -1:
+			updated = l[:-1]+name+" \n"
+			break
+		i+=1
+
+	if data[i].find(name+" ") is -1:
+		data[i] = updated
+		with open('/etc/ssh/sshd_config',"w") as file:
+			file.writelines(data)
+		execBash(["service","ssh","restart"])
+		print("ssh set")
+
+def initpassword(name,password):
+	napa = name+":"+password
+	ps = subprocess.Popen(("echo",napa), stdout=subprocess.PIPE)
+	subprocess.check_output(("chpasswd","-c","SHA512",name), stdin=ps.stdout)
+	print("password hashed")
+
+def createUser(name,group,skel,shell,ssh,quota,password):
+	execBash(["useradd",name,"-m","-g",group,"-k","/etc/skel/"+skel,"-s","/bin/"+shell])
+	setQuotas(name,quota)
+	if shell != "false":
+		initpassword(name,password)
+		if ssh == "true":
+			createSshEntry(name)
+	if skel == "web":
+		createDns(name)
+		setupApache2(name)
+	clear()
+	ret = "User created!"
+	printStatus(name,group,skel,shell,ssh,quota,ret)
+	time.sleep(.500)
+
+def createDns(name):
+	dnsEntry=str(name)+' IN A 192.168.1.6\n'
+	with open('/etc/bind/db.awesome.intern','a+') as f:
+		f.write(dnsEntry)
+	f.close()
+	execBash(['systemctl','restart','bind9'])
+
+def setupApache2(name):
+	confPath='/etc/apache2/sites-available/'
+	index='/home/'+str(name)+'/html/index.html'
+	data = readLines(confPath+'http_template.conf')
+	bufferConf = ''
+	bufferIndex = ''
+	for l in data:
+		ret = l
+		if l.find('NAME') != -1:
+			ret = l.replace('NAME',str(name))
+		bufferConf+=ret
+	with open(confPath+str(name)+'.conf','w') as f:
+		f.writelines(bufferConf)
+	f.close()
+	data = readLines(index)
+	for l in data:
+                ret = l
+                if l.find('NAME') != -1:
+                        ret = l.replace('NAME',str(name))
+                bufferIndex+=ret
+        with open(index,'w') as f:
+                f.writelines(bufferIndex)
+        f.close()
+	execBash(['a2ensite',str(name)+'.conf'])
+	execBash(['systemctl','reload','apache2'])
+
+def run():
+
+	password="pass"
+
+	unset = "unset"
+	username = unset
+	group = unset
+	skel = unset
+	shell = unset
+	ssh =  unset
+	quota = unset
+
+	ret = " "
+
+	running=1
+
+	while(running):
+		clear()
+		printStatus(username,group,skel,shell,ssh,quota,ret)
+		if username == "unset":
+			username,ret = chooseName()
+		elif group == "unset":
+			clear()
+			group,ret = chooseGroup(listgroups())
+		elif skel == "unset":
+			skel,ret = chooseSkel()
+		elif shell == "unset":
+			shell,ret = chooseShell()
+		elif ssh == "unset":
+			if shell == "false":
+				ssh,ret = "false","No shell no ssh!"
+			else:
+				ssh,ret = chooseSsh()
+		elif quota == "unset":
+			quota,ret = chooseQuota()
+		else:
+			running=0
+
+	clear()
+	ret = "All attributes set"
+	printStatus(username,group,skel,shell,ssh,quota,ret)
+
+	user_input = getInput("Create user "+username+" ?\n[y|n] ")
+	if user_input == "j" or user_input == "y":
+		createUser(username,group,skel,shell,ssh,quota,password)
+	print
+	print("EXIT")
+	print
+run()
