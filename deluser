@@ -1,0 +1,176 @@
+#!/usr/bin/env python
+
+import time
+import subprocess
+
+def display(user,group,ret):
+	print("DELETE USER SCRIPT")
+	print
+	print(listUsers())
+	print
+	print("Selected:")
+	print("User\t\t"+user)
+	print("Group\t\t"+group)
+	print
+	print(ret)
+
+def listUsers():
+        list= []
+        ret = "Users\nid\tname\t\tgroup\t\tmembers"
+        for l in readLines('/etc/passwd'):
+                l = l.split(':')
+                gId = l[3]
+                if int(gId) >= 1000 and int(gId) != 65534:
+                        gName,gMember = getGroupById(gId)
+                        tmp = str(l[2])+"\t"+l[0]+"\t\t"+gName+"\t\t"+str(gMember)
+                        list.append(tmp)
+        for l in list:
+                ret+="\n"+l
+        return ret
+
+def listGroups():
+        list = []
+        ret = "Groups\nid\tname\t\tmembers"
+        for l in readLines('/etc/group'):
+                l = l.split(":")
+                gId= l[2]
+                if int(gId) >= 1000 and int(gId) != 65534:
+                        gName,gMember = getGroupById(gId)
+                        tmp = str(gId)+"\t"+gName+"\t\t"+str(gMember)
+                        list.append(tmp)
+        for l in list:
+                ret+='\n'+l
+        return ret
+
+def countUserInGroup(id):
+        count=0
+        for l in readLines('/etc/passwd'):
+                if l.find(str(id)+":") is not -1:
+                        count+=1
+        return count
+
+def getGroupById(id):
+        for l in readLines('/etc/group'):
+                if l.find(id+":") is not -1:
+                        l = l.split(":")
+                        return l[0],countUserInGroup(id)
+
+def execBash(command):
+	subprocess.call(command)
+
+def clear():
+	execBash(['clear'])
+
+def getInput(text):
+	text +=": "
+	return str(raw_input(text))
+
+def readLines(path):
+	with open(path) as f:
+		data = f.readlines()
+	return data
+
+def getUser():
+	userId=-1
+	username = getInput("Enter unsername")
+	for l in readLines('/etc/passwd'):
+		if l.find(username+":") is not -1:
+			l = l.split(":")
+			user = str(l[0])
+			userId = int(l[2])
+			groupId = str(l[3])
+			group = getGroup(groupId)
+			break
+	if userId >= 1000 and userId != 65534:
+		return user,userId,group,groupId,user+" found"
+	elif userId < 1000 and userId >= 0:
+		return "unset",None,None,None,"System users cant be deleted!"
+	else:
+		return "unset",None,None,None,"(-.-*)"
+
+
+def getGroup(id):
+	for l in readLines('/etc/group'):
+		if l.find(id+":") is not -1:
+			l = l.split(":")
+			return str(l[0])
+
+def delUser(name):
+	execBash(['deluser',"-remove-home","-q",name])
+
+def checkSsh(name):
+	for l in readLines('/etc/ssh/sshd_config'):
+		if l.find(name+" ") is not -1:
+			return "true"
+			break
+
+def delSsh(name):
+	data = readLines('/etc/ssh/sshd_config')
+	i=0
+	for l in data:
+		if l.find(name+" ") is not -1:
+			updated = l.replace(name+" ","")
+			break
+		i+=1
+	if data[i].find(name+" ") is not -1:
+		data[i] = updated
+		with open('/etc/ssh/sshd_config',"w") as f:
+			f.writelines(data)
+
+def checkWebServer(name):
+	try:
+		f =open('/etc/apache2/sites-available/'+str(name)+".config")
+		f.close()
+		return "true"
+	except:
+		return "false"
+
+def removeDns(name):
+	dnsconfig='/etc/bind/db.awesome.intern'
+	data = readLines(dnsconfig)
+	buffer = ''
+	for l in data:
+		if l.find(name) == -1:
+			buffer+=l
+	with open(dnsconfig,'w') as f:
+		f.writelines(buffer)
+	print('DNS-Entry removed!')
+
+def removeApache2(name):
+	execBash(['a2dissite',str(name)+'.conf'])
+	execBash(['systemctl','reload','apache2'])
+	execBash(['rm','-v','/etc/apache2/sites-available/'+str(name)+'.conf'])
+
+def run():
+	user = "unset"
+	userD = user
+	group = "unknown"
+	ret = " "
+
+	running=1
+
+	while running:
+		clear()
+		display(userD,group,ret)
+		if user == "unset":
+			user,uId,group,gId,ret=getUser()
+			if not group:
+				group="unknown"
+			else:
+				userD=user+":"+str(uId)
+				group+=":"+str(gId)
+		else:
+			running=0
+	if checkSsh(user):
+		delSsh(user)
+		execBash(['service','ssh','restart'])
+		print('SSH updated')
+	if checkWebServer(user):
+		print('WebServer found!')
+		execBash(['a2dissite',str(user)+'.conf'])
+		removeDns(user)
+		removeApache2(user)
+	delUser(user)
+	time.sleep(1)
+
+run()
